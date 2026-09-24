@@ -252,7 +252,7 @@ func TestChangesKeepsOnlyCommitsThatMoveTheGraph(t *testing.T) {
 	git(t, dir, "commit", "-qm", "docs")
 
 	r := &Repo{Dir: dir, Exclude: []string{"vendor/"}}
-	frames, err := r.Changes(nil)
+	frames, _, err := r.Changes(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,5 +304,25 @@ func TestTheClockHoldsTheLastFrame(t *testing.T) {
 	}
 	if got := 1 - c.start[3]; got*c.dur < 3.49 {
 		t.Errorf("the last frame is up %gs, want 3.5", got*c.dur)
+	}
+}
+
+// The rules gocloc counts by: blank anywhere is blank, a line with any code
+// on it is code, and everything in or opening a block comment is comment.
+func TestCountGoMatchesGoclocRules(t *testing.T) {
+	src := "package x\n" + // code
+		"\n" + // blank
+		"// doc\n" + // comment
+		"/* one\n" + // comment
+		"\n" + // blank, even inside a block comment
+		"   two */\n" + // comment
+		"var a = 1 // trailing\n" + // code
+		"/* x */ var b = 2\n" + // code after a closed block
+		"var c = 3 /* opens\n" + // code
+		"closes */\n" // comment
+	got := countGo([]byte(src))
+	want := Cloc{Files: 1, Blank: 2, Comment: 4, Code: 4}
+	if got != want {
+		t.Errorf("countGo = %+v, want %+v", got, want)
 	}
 }

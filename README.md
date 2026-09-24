@@ -32,20 +32,36 @@ merged branch arrives as one step, the merge.
 
 ## The timeline
 
-The band across the top is the calendar. In it:
+The header across the top is the calendar. In it:
 
-- the package count over time, bright up to the frame on screen and dim ahead
-  of it;
-- a tick under the band for every frame — where the ticks are dense, the
+- two strips on the same time axis: the **package count**, and **lines of Go
+  code** — the second at every commit that touched Go, not only the frames,
+  since size moves with nearly every commit and the graph with few. Each is
+  bright up to the frame on screen and dim ahead of it, and labeled with the
+  peak it is drawn against;
+- a tick under the strips for every frame — where the ticks are dense, the
   structure was being worked on;
 - year lines;
-- the cursor, on the frame on screen, with its date, commit, subject and counts
-  written above.
+- the cursor, on the frame on screen, with its date, commit, subject, package
+  and edge counts above, and under it **gocloc's row for Go** at that commit:
+  files, blank, comment, code.
 
 Frames get equal time on screen, not equal time on the calendar, so the cursor
 races across a quiet year and crawls through a busy month. A package is lit on
 the frame it arrives. The last frame holds for `-hold` seconds (default 3) so
 the graph as it stands stays up before the loop starts again.
+
+### Lines of code, for free
+
+Every Go blob in the history is already read once for its imports, so its lines
+are counted in the same pass, the way gocloc counts them. It adds nothing
+measurable to the run. Only Go: counting other languages would mean reading
+every other blob in the history as well.
+
+Checked against gocloc on skywire's HEAD, 2,884 files: files and blank lines
+agree exactly, and code and comment agree on all but two files. Both embed
+shell scripts in string literals, where gocloc reads `"${1}"/*/` as the start
+of a block comment and counts a thousand lines of code as comment.
 
 ## Why not just run goda per commit
 
@@ -107,8 +123,8 @@ skywire, every graph change on the first-parent line, 2019–2026:
 
 | view | frames | packages | edges | read | layout | SVG |
 |---|---|---|---|---|---|---|
-| `-depth 2` | 319 | 201 | 1,071 | 13 s | 13 s | 764 KB |
-| every package | 575 | 705 | 4,150 | 12 s | 5 m 20 s | 3.6 MB |
+| `-depth 2` | 319 | 201 | 1,071 | 15 s | 19 s | 921 KB |
+| every package | 575 | 705 | 4,150 | 8 s | 5 m 49 s | 3.9 MB |
 
 The full view's layout is `dot` over the 400 packages at HEAD, for the
 anchor. `dot` does layered ranking and crossing minimization, the right picture

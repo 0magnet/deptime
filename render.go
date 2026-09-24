@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -69,7 +70,7 @@ func newClock(n, fps int, hold float64) clock {
 // Every node and edge is emitted ONCE, at the position the union layout gave
 // it, and carries its own visibility animation. Nothing moves; things appear
 // and disappear. See layout.go for why that is the only way this is legible.
-func Render(frames []Graph, u *Union, p *Placed, o RenderOptions) string {
+func Render(frames []Graph, series []Sample, u *Union, p *Placed, o RenderOptions) string {
 	n := len(frames)
 	c := newClock(n, o.FPS, o.Hold)
 	w, h := p.W+2*o.Pad, p.H+2*o.Pad
@@ -78,7 +79,7 @@ func Render(frames []Graph, u *Union, p *Placed, o RenderOptions) string {
 	s := math.Max(1, math.Min(4, w/900))
 	top := 0.0
 	if o.Timeline {
-		top = 96 * s
+		top = timelineHeight * s
 	}
 
 	var b strings.Builder
@@ -86,7 +87,7 @@ func Render(frames []Graph, u *Union, p *Placed, o RenderOptions) string {
 		w, h+top, w, h+top)
 	fmt.Fprintf(&b, `<rect width="%.0f" height="%.0f" fill="%s"/>`, w, h+top, o.BG)
 	if o.Timeline {
-		writeTimeline(&b, frames, w, s, c, o)
+		writeTimeline(&b, frames, series, w, s, c, o)
 	}
 	fmt.Fprintf(&b, `<g transform="translate(%.1f,%.1f)">`, o.Pad, o.Pad+top)
 
@@ -147,87 +148,113 @@ func arrivals(in []bool) []bool {
 	return out
 }
 
-// writeTimeline draws the band across the top: package count over real time,
-// a tick for every frame, year lines, and a cursor that jumps to the frame on
-// screen, with the frame's date, commit and subject written above it.
+// timelineHeight is the space above the graph the timeline takes, at scale 1.
+const timelineHeight = 150
+
+// writeTimeline draws the header: the frame's date, commit and subject; two
+// strips on one calendar — package count and lines of Go code — with a tick
+// for every frame and a cursor on the frame on screen; and the frame's gocloc
+// row under them.
 //
 // The x axis is the calendar, not the frame number. Frames are spaced evenly
 // in TIME ON SCREEN, so the cursor races across a quiet year and crawls
 // through a busy month — which is the information: where the rug is dense,
 // the structure was being worked on.
-func writeTimeline(b *strings.Builder, frames []Graph, w, s float64, c clock, o RenderOptions) {
+//
+// The two quantities get a strip each rather than sharing one with two
+// scales: they differ by three orders of magnitude, and a second y axis
+// invites reading a crossing of the lines as meaning something.
+func writeTimeline(b *strings.Builder, frames []Graph, series []Sample, w, s float64, c clock, o RenderOptions) {
 	n := len(frames)
 	left, right := 16*s, w-16*s
 	capY := 22 * s
-	bandY, bandH := 36*s, 44*s
-	t := make([]float64, n)
-	for i, g := range frames {
-		if d, err := time.Parse("2006-01-02", g.When); err == nil {
-			t[i] = float64(d.Unix())
+	stripH, gap := 34*s, 5*s
+	pkgY := 36 * s
+	locY := pkgY + stripH + gap
+	bandY, bandB := pkgY, locY+stripH
+	rowY := bandB + 30*s
+
+	day := func(d string) float64 {
+		t, err := time.Parse("2006-01-02", d)
+		if err != nil {
+			return 0
 		}
+		return float64(t.Unix())
 	}
-	t0, t1 := t[0], t[n-1]
-	x := func(i int) float64 {
+	t0, t1 := day(frames[0].When), day(frames[n-1].When)
+	if len(series) > 0 {
+		t0 = math.Min(t0, day(series[0].When))
+		t1 = math.Max(t1, day(series[len(series)-1].When))
+	}
+	xAt := func(t float64) float64 {
 		if t1 <= t0 {
-			if n == 1 {
-				return right
-			}
-			return left + (right-left)*float64(i)/float64(n-1)
+			return right
 		}
-		return left + (right-left)*(t[i]-t0)/(t1-t0)
+		return left + (right-left)*(t-t0)/(t1-t0)
 	}
-	maxN := 1
-	for _, g := range frames {
-		maxN = max(maxN, len(g.Nodes))
-	}
-	y := func(k int) float64 { return bandY + bandH - bandH*0.9*float64(k)/float64(maxN) }
-
-	fmt.Fprintf(b, `<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s"/>`, left, bandY, right-left, bandH, o.Band)
-
-	// Package count as a step area: the count holds until the next change.
-	var area strings.Builder
-	fmt.Fprintf(&area, "M%.1f,%.1f", x(0), bandY+bandH)
+	fx := make([]float64, n)
 	for i, g := range frames {
-		fmt.Fprintf(&area, "L%.1f,%.1f", x(i), y(len(g.Nodes)))
-		if i+1 < n {
-			fmt.Fprintf(&area, "L%.1f,%.1f", x(i+1), y(len(g.Nodes)))
+		fx[i] = xAt(day(g.When))
+		if t1 <= t0 && n > 1 {
+			fx[i] = left + (right-left)*float64(i)/float64(n-1)
 		}
 	}
-	fmt.Fprintf(&area, "L%.1f,%.1fZ", x(n-1), bandY+bandH)
-	fmt.Fprintf(b, `<path d="%s" fill="%s"/>`, area.String(), o.Area)
 
-	// The same area again, clipped to the past: a rectangle whose width
+	// Without a series — sampled frames — the frames are the series.
+	if len(series) == 0 {
+		for _, g := range frames {
+			series = append(series, Sample{When: g.When, Cloc: g.Cloc})
+		}
+	}
+	pkgX, pkgV := make([]float64, n), make([]int, n)
+	for i, g := range frames {
+		pkgX[i], pkgV[i] = fx[i], len(g.Nodes)
+	}
+	locX, locV := make([]float64, len(series)), make([]int, len(series))
+	for i, p := range series {
+		locX[i], locV[i] = xAt(day(p.When)), p.Cloc.Code
+	}
+	pkgArea := stepArea(pkgX, pkgV, pkgY, stripH, right)
+	locArea := stepArea(locX, locV, locY, stripH, right)
+
+	fmt.Fprintf(b, `<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s"/>`, left, pkgY, right-left, stripH, o.Band)
+	fmt.Fprintf(b, `<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s"/>`, left, locY, right-left, stripH, o.Band)
+	fmt.Fprintf(b, `<g fill="%s"><path d="%s"/><path d="%s"/></g>`, o.Area, pkgArea, locArea)
+
+	// The same areas again, clipped to the past: a rectangle whose width
 	// follows the cursor. One animated element, not one per frame.
 	xs := make([]string, n)
 	ws := make([]string, n)
 	for i := range frames {
-		xs[i] = fmt.Sprintf("%.1f,0", x(i))
-		ws[i] = fmt.Sprintf("%.1f", x(i)-left)
+		xs[i] = fmt.Sprintf("%.1f,0", fx[i])
+		ws[i] = fmt.Sprintf("%.1f", fx[i]-left)
 	}
 	keys := keyTimes(c)
-	fmt.Fprintf(b, `<clipPath id="past"><rect x="%.1f" y="%.1f" height="%.1f" width="%s">`, left, bandY, bandH, ws[0])
+	fmt.Fprintf(b, `<clipPath id="past"><rect x="%.1f" y="%.1f" height="%.1f" width="%s">`, left, bandY, bandB-bandY, ws[0])
 	fmt.Fprintf(b, `<animate attributeName="width" calcMode="discrete" dur="%gs" repeatCount="indefinite" values="%s" keyTimes="%s"/></rect></clipPath>`,
 		c.dur, strings.Join(ws, ";"), keys)
-	fmt.Fprintf(b, `<path d="%s" fill="%s" clip-path="url(#past)"/>`, area.String(), o.Past)
+	fmt.Fprintf(b, `<g fill="%s" clip-path="url(#past)"><path d="%s"/><path d="%s"/></g>`, o.Past, pkgArea, locArea)
 
-	// Year lines over the area, labeled at the foot of the band.
+	// Year lines over both strips.
+	fmt.Fprintf(b, `<g font-size="%.1f" fill="%s" fill-opacity="0.7">`, 9*s, o.Text)
 	if t1 > t0 {
 		y0, y1 := time.Unix(int64(t0), 0).UTC().Year(), time.Unix(int64(t1), 0).UTC().Year()
-		fmt.Fprintf(b, `<g font-size="%.1f" fill="%s" fill-opacity="0.7">`, 9*s, o.Text)
 		for yr := y0 + 1; yr <= y1; yr++ {
-			ty := float64(time.Date(yr, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
-			xx := left + (right-left)*(ty-t0)/(t1-t0)
+			xx := xAt(float64(time.Date(yr, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
 			fmt.Fprintf(b, `<line x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" stroke="%s" stroke-opacity="0.3" stroke-width="%.1f"/>`,
-				xx, xx, bandY, bandY+bandH, o.Text, 0.6*s)
-			fmt.Fprintf(b, `<text x="%.1f" y="%.1f">%d</text>`, xx+3*s, bandY+10*s, yr)
+				xx, xx, bandY, bandB, o.Text, 0.6*s)
+			fmt.Fprintf(b, `<text x="%.1f" y="%.1f">%d</text>`, xx+3*s, pkgY+10*s, yr)
 		}
-		b.WriteString(`</g>`)
 	}
+	// What each strip is, and its scale: the peak it is drawn against.
+	fmt.Fprintf(b, `<text x="%.1f" y="%.1f">packages · peak %s</text>`, left+4*s, locY-gap-4*s, comma(maxOf(pkgV)))
+	fmt.Fprintf(b, `<text x="%.1f" y="%.1f">lines of Go code · peak %s</text>`, left+4*s, bandB-4*s, comma(maxOf(locV)))
+	b.WriteString(`</g>`)
 
 	// The rug: where the graph changed.
 	var rug strings.Builder
 	for i := range frames {
-		fmt.Fprintf(&rug, "M%.1f,%.1fv%.1f", x(i), bandY+bandH, 5*s)
+		fmt.Fprintf(&rug, "M%.1f,%.1fv%.1f", fx[i], bandB, 5*s)
 	}
 	fmt.Fprintf(b, `<path d="%s" stroke="%s" stroke-opacity="0.45" stroke-width="%.1f"/>`, rug.String(), o.Cursor, 0.6*s)
 
@@ -235,12 +262,12 @@ func writeTimeline(b *strings.Builder, frames []Graph, w, s float64, c clock, o 
 	fmt.Fprintf(b, `<g transform="translate(%s)">`, xs[0])
 	fmt.Fprintf(b, `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="%gs" repeatCount="indefinite" values="%s" keyTimes="%s"/>`,
 		c.dur, strings.Join(xs, ";"), keys)
-	fmt.Fprintf(b, `<line y1="%.1f" y2="%.1f" stroke="%s" stroke-width="%.1f"/>`, bandY-2*s, bandY+bandH+5*s, o.Cursor, 1.5*s)
+	fmt.Fprintf(b, `<line y1="%.1f" y2="%.1f" stroke="%s" stroke-width="%.1f"/>`, bandY-2*s, bandB+5*s, o.Cursor, 1.5*s)
 	fmt.Fprintf(b, `<path d="M%.1f,%.1fh%.1fl%.1f,%.1fz" fill="%s"/>`, -4*s, bandY-7*s, 8*s, -4*s, 5*s, o.Cursor)
 	b.WriteString(`</g>`)
 
-	// The caption: one pair of texts per frame, each shown on its frame. It is
-	// the only part that has to be per frame — the words differ every time.
+	// The captions: one group per frame, each shown on its frame. They are the
+	// only part that has to be per frame — the words differ every time.
 	fmt.Fprintf(b, `<g font-size="%.1f" fill="%s">`, 13*s, o.Text)
 	for i, g := range frames {
 		vis := make([]bool, n)
@@ -253,11 +280,55 @@ func writeTimeline(b *strings.Builder, frames []Graph, w, s float64, c clock, o 
 		writeVisibility(b, vis, c)
 		fmt.Fprintf(b, `<text x="%.1f" y="%.1f"><tspan fill="%s">%s</tspan> · %s · <tspan fill-opacity="0.75">%s</tspan></text>`,
 			left, capY, o.Cursor, g.When, html.EscapeString(g.Commit), html.EscapeString(clip(g.Subject, int(w/(7.5*s))-40)))
-		fmt.Fprintf(b, `<text x="%.1f" y="%.1f" text-anchor="end">%d packages · %d edges</text>`,
-			right, capY, len(g.Nodes), edges)
+		fmt.Fprintf(b, `<text x="%.1f" y="%.1f" text-anchor="end">%s packages · %s edges</text>`,
+			right, capY, comma(len(g.Nodes)), comma(edges))
+		// gocloc's row for Go, in gocloc's column order.
+		fmt.Fprintf(b, `<text x="%.1f" y="%.1f" xml:space="preserve"><tspan fill-opacity="0.6">Go  files</tspan> %s  <tspan fill-opacity="0.6">blank</tspan> %s  <tspan fill-opacity="0.6">comment</tspan> %s  <tspan fill-opacity="0.6">code</tspan> <tspan fill="%s">%s</tspan></text>`,
+			left, rowY, comma(g.Cloc.Files), comma(g.Cloc.Blank), comma(g.Cloc.Comment), o.Cursor, comma(g.Cloc.Code))
 		b.WriteString(`</g>`)
 	}
 	b.WriteString(`</g>`)
+}
+
+// stepArea is a series as a filled step chart inside a strip: each value
+// holds until the next, and the last holds to the right edge.
+func stepArea(xs []float64, vs []int, top, h, right float64) string {
+	peak := max(maxOf(vs), 1)
+	y := func(v int) float64 { return top + h - h*0.9*float64(v)/float64(peak) }
+	var d strings.Builder
+	if len(xs) == 0 {
+		return ""
+	}
+	fmt.Fprintf(&d, "M%.1f,%.1f", xs[0], top+h)
+	for i := range xs {
+		next := right
+		if i+1 < len(xs) {
+			next = xs[i+1]
+		}
+		fmt.Fprintf(&d, "V%.1fH%.1f", y(vs[i]), next)
+	}
+	fmt.Fprintf(&d, "V%.1fZ", top+h)
+	return d.String()
+}
+
+func maxOf(vs []int) int {
+	m := 0
+	for _, v := range vs {
+		m = max(m, v)
+	}
+	return m
+}
+
+// comma writes 312456 as 312,456.
+func comma(n int) string {
+	s := strconv.Itoa(n)
+	if n < 0 {
+		return "-" + comma(-n)
+	}
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 func clip(s string, n int) string {

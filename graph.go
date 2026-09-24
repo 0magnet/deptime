@@ -38,6 +38,7 @@ type Graph struct {
 	Edges   map[string][]string // from → to, both as Nodes entries
 	Files   map[string]int      // node → how many .go files it holds
 	Lines   map[string]int      // node → how many lines of Go it holds
+	Cloc    Cloc                // the whole commit's Go, counted the way gocloc does
 }
 
 // Repo is a git repository read through plumbing, so that nothing in the

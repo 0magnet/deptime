@@ -17,13 +17,14 @@ import (
 type fileInfo struct {
 	imports []string // as written, internal or not
 	lines   int
+	cloc    Cloc
 }
 
 // parseFile reads a file's import block. ImportsOnly makes the parser stop at
 // the end of it, which is the whole reason this is fast enough to run over
 // history. A file that does not parse contributes its size and no edges.
 func parseFile(fset *token.FileSet, name string, src []byte) fileInfo {
-	fi := fileInfo{lines: 1 + bytes.Count(src, []byte("\n"))}
+	fi := fileInfo{lines: 1 + bytes.Count(src, []byte("\n")), cloc: countGo(src)}
 	af, err := parser.ParseFile(fset, name, src, parser.ImportsOnly)
 	if err != nil {
 		return fi
@@ -51,10 +52,12 @@ func assemble(g *Graph, mod string, files map[string]*fileInfo) {
 	edges := map[string]map[string]bool{}
 	g.Files = map[string]int{}
 	g.Lines = map[string]int{}
+	g.Cloc = Cloc{}
 	for p, fi := range files {
 		pkg := path.Dir(p)
 		g.Files[pkg]++
 		g.Lines[pkg] += fi.lines
+		g.Cloc.add(fi.cloc)
 		for _, imp := range fi.imports {
 			rel, ok := internalTo(mod, imp)
 			if !ok || rel == pkg {

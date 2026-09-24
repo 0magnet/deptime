@@ -318,7 +318,7 @@ func Collapse(g Graph, depth int) Graph {
 		}
 		return strings.Join(parts, "/")
 	}
-	out := Graph{Commit: g.Commit, When: g.When, Subject: g.Subject,
+	out := Graph{Commit: g.Commit, When: g.When, Subject: g.Subject, Cloc: g.Cloc,
 		Edges: map[string][]string{}, Files: map[string]int{}, Lines: map[string]int{}}
 	seen := map[string]bool{}
 	for _, n := range g.Nodes {

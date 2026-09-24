@@ -30,22 +30,26 @@ import (
 // every change is shown and none is shown twice. Changes in size alone do not
 // count, or every commit would be one.
 //
+// Alongside the frames it returns a Sample for every commit that touched Go,
+// for the lines-of-code strip on the timeline.
+//
 // First parent, because that is the history as the default branch saw it: a
 // merged branch arrives as one step, the merge, rather than as its commits
 // interleaved by date with the mainline's.
-func (r *Repo) Changes(fold func(Graph) Graph) ([]Graph, error) {
+func (r *Repo) Changes(fold func(Graph) Graph) ([]Graph, []Sample, error) {
 	commits, err := r.rawLog()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	info, err := r.parseAll(commits)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	files := map[string]*fileInfo{}
 	mod := ""
 	var out []Graph
+	var series []Sample
 	prev := ""
 	for ci, c := range commits {
 		touched := false
@@ -71,6 +75,7 @@ func (r *Repo) Changes(fold func(Graph) Graph) ([]Graph, error) {
 		}
 		g := c.Graph
 		assemble(&g, mod, files)
+		series = append(series, Sample{When: g.When, Cloc: g.Cloc})
 		if len(g.Nodes) == 0 {
 			continue
 		}
@@ -88,7 +93,7 @@ func (r *Repo) Changes(fold func(Graph) Graph) ([]Graph, error) {
 			out = append(out, g)
 		}
 	}
-	return out, nil
+	return out, series, nil
 }
 
 // signature is a graph's shape as a string: nodes and edges, not sizes.
@@ -282,4 +287,12 @@ func short(h string) string {
 		return h[:10]
 	}
 	return h
+}
+
+// Sample is the size of the module's Go at one commit. There is one for every
+// commit that touched Go, not only the ones that became frames: size changes
+// with nearly every commit, the graph with few, and the timeline plots both.
+type Sample struct {
+	When string
+	Cloc Cloc
 }

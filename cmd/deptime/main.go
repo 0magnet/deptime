@@ -40,11 +40,12 @@ func main() {
 
 	t0 := time.Now()
 	var frames []deptime.Graph
+	var series []deptime.Sample
 	var err error
 	if *step > 0 {
 		frames, err = sample(r, *n, *step, fold)
 	} else {
-		frames, err = r.Changes(fold)
+		frames, series, err = r.Changes(fold)
 	}
 	if err != nil {
 		die(err)
@@ -80,7 +81,7 @@ func main() {
 	o.Hold = *hold
 	placed.Crop(o.Pad)
 	o.Pad = 0 // Crop already made the margin
-	svg := deptime.Render(frames, u, placed, o)
+	svg := deptime.Render(frames, series, u, placed, o)
 
 	fmt.Fprintf(os.Stderr,
 		"%d frames (of %d graph changes) · %d packages · %d edges in the union\n  read %s · one %s layout %s · %d KB\n",
