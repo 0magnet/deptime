@@ -19,14 +19,15 @@ import (
 
 func main() {
 	var (
-		repo  = flag.String("repo", ".", "the git repository to read")
-		n     = flag.Int("frames", 40, "how many commits to sample")
-		step  = flag.Int("every", 1, "take every Nth commit")
-		out   = flag.String("o", "", "write the animated SVG here")
-		fps   = flag.Int("fps", 4, "frames a second")
-		dot   = flag.String("engine", "auto", "graphviz engine: auto, dot, sfdp, neato")
-		stats = flag.Bool("stats", false, "report each frame as it is read")
-		depth = flag.Int("depth", 0, "fold packages to this many path elements (0 = every package)")
+		repo   = flag.String("repo", ".", "the git repository to read")
+		n      = flag.Int("frames", 40, "how many commits to sample")
+		step   = flag.Int("every", 1, "take every Nth commit")
+		out    = flag.String("o", "", "write the animated SVG here")
+		fps    = flag.Int("fps", 4, "frames a second")
+		dot    = flag.String("engine", "auto", "graphviz engine: auto, dot, sfdp, neato")
+		stats  = flag.Bool("stats", false, "report each frame as it is read")
+		depth  = flag.Int("depth", 0, "fold packages to this many path elements (0 = every package)")
+		anchor = flag.Bool("anchor", true, "pin the newest frame at its own hierarchical layout, so the animation ends on the graph as it stands")
 	)
 	flag.Parse()
 
@@ -65,7 +66,13 @@ func main() {
 
 	t1 := time.Now()
 	u := deptime.Unite(frames)
-	placed, engine, err := u.Layout(*dot)
+	var placed *deptime.Placed
+	var engine string
+	if *anchor {
+		placed, engine, err = u.LayoutAnchored(frames[len(frames)-1], "dot", "neato")
+	} else {
+		placed, engine, err = u.Layout(*dot)
+	}
 	if err != nil {
 		die(err)
 	}

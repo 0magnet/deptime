@@ -356,3 +356,65 @@ func Collapse(g Graph, depth int) Graph {
 	}
 	return out
 }
+
+// LayoutAnchored lays the union out so that the LAST frame keeps the positions
+// a plain hierarchical layout of that frame alone would give it.
+//
+// The union layout is stable — nothing moves between frames, which is the
+// point — but it is a layout of a graph nobody ever had: on skywire, 232 of
+// the 632 packages in the union (37%) existed at some point and are gone at
+// HEAD, and they pull the picture around. So the final frame does not look
+// like the dependency graph of the project as it stands, which is the one
+// picture a reader already knows.
+//
+// Laying out only the final state instead, and going backwards, is the obvious
+// fix and throws those 232 away: a third of the history would never appear.
+//
+// So both. The final frame is laid out on its own with dot, its packages are
+// PINNED at those coordinates, and the departed ones are placed around them by
+// a force pass that cannot move anything pinned. The end of the animation is
+// the graph as it is; everything else grew into it.
+func (u *Union) LayoutAnchored(last Graph, hierarchy, free string) (*Placed, string, error) {
+	if hierarchy == "" {
+		hierarchy = "dot"
+	}
+	if free == "" {
+		free = "neato"
+	}
+	// Step one: the final state alone, as a hierarchy.
+	anchor := Unite([]Graph{last})
+	fixed, err := runGraphviz(hierarchy, anchor.DOT())
+	if err != nil {
+		return nil, hierarchy, err
+	}
+
+	// Step two: the union, with those positions nailed down. The "!" is
+	// graphviz's own way of saying a node may not be moved.
+	var b strings.Builder
+	b.WriteString("digraph G {\n  rankdir=LR;\n  node [shape=box];\n  overlap=false;\n  splines=true;\n")
+	for _, n := range u.Nodes {
+		if p, ok := fixed.Node[n]; ok {
+			fmt.Fprintf(&b, "  %q [width=%.3f,height=0.3,pos=%q];\n", n, nodeWidth(n),
+				fmt.Sprintf("%.2f,%.2f!", p.X, fixed.H-p.Y))
+			continue
+		}
+		fmt.Fprintf(&b, "  %q [width=%.3f,height=0.3];\n", n, nodeWidth(n))
+	}
+	for _, e := range u.Edges {
+		fmt.Fprintf(&b, "  %q -> %q;\n", e[0], e[1])
+	}
+	b.WriteString("}\n")
+
+	p, err := runGraphviz(free, b.String())
+	return p, hierarchy + "+" + free, err
+}
+
+func runGraphviz(engine, dot string) (*Placed, error) {
+	cmd := exec.Command(engine, "-Tplain")
+	cmd.Stdin = strings.NewReader(dot)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s -Tplain: %w", engine, err)
+	}
+	return parsePlain(string(out))
+}

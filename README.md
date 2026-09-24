@@ -38,6 +38,23 @@ are used, whether an import survives in a file that no longer compiles,
 generated code that was never committed — is invisible. The shape of the module
 over time is not.
 
+## Anchoring on the newest frame
+
+A union layout is stable, which is the point, but it is a layout of a graph
+nobody ever had: on skywire, 232 of the 632 packages in the union — 37% —
+existed at some point and are gone at HEAD, and they pull the picture around.
+The final frame therefore does not look like the dependency graph of the
+project as it stands, which is the one picture a reader already knows.
+
+Laying out only the newest state and walking backwards is the obvious fix and
+throws those 232 away: a third of the history would never appear.
+
+So `-anchor` (on by default) does both. The newest frame is laid out on its own
+with `dot`, its packages are pinned at those coordinates, and the departed ones
+are placed around them by a force pass that cannot move anything pinned. The
+animation ends on the graph as it is, and everything else grew into it. On
+skywire at `-depth 2` that is 7.5 s against 0.3 s for the plain union layout.
+
 ## The layout is the whole problem
 
 Graph layout is not stable under small changes. Add one package to a
@@ -94,7 +111,8 @@ megabyte of semicolons.
 -frames  how many commits to sample (default 40)
 -every   take every Nth commit (default 1)
 -depth   fold packages to this many path elements (0 = every package)
--engine  auto, dot, sfdp, neato (default auto)
+-engine  auto, dot, sfdp, neato (default auto; ignored when -anchor is on)
+-anchor  pin the newest frame at its own dot layout (default true)
 -fps     frames a second (default 4)
 -o       write the SVG here
 -stats   report each frame as it is read
