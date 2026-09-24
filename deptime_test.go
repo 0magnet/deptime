@@ -203,7 +203,7 @@ func TestVisibilityIsEncodedAsChangesNotFrames(t *testing.T) {
 	for i := range always {
 		always[i] = true
 	}
-	writeVisibility(&b, always, 10)
+	writeVisibility(&b, always, newClock(200, 20, 0))
 	if strings.Contains(b.String(), "<animate") {
 		t.Errorf("an always-visible element carries an animation: %q", b.String())
 	}
@@ -213,7 +213,7 @@ func TestVisibilityIsEncodedAsChangesNotFrames(t *testing.T) {
 	for i := 100; i < 200; i++ {
 		appears[i] = true
 	}
-	writeVisibility(&b, appears, 10)
+	writeVisibility(&b, appears, newClock(200, 20, 0))
 	out := b.String()
 	if n := strings.Count(out, ";"); n > 4 {
 		t.Errorf("a single appearance took %d separators; it should be a couple of stops, not one per frame:\n%s", n, out)
@@ -233,4 +233,76 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// A frame is kept where the graph moves and nowhere else: a commit that edits
+// a function body is not a frame, a commit that deletes a package is, and the
+// newest commit ends the animation even when it changed nothing.
+func TestChangesKeepsOnlyCommitsThatMoveTheGraph(t *testing.T) {
+	dir := repo(t) // first: a; second: b → a
+	write(t, dir, "a/a.go", "package a\n\nfunc A() { _ = 1 }\n")
+	git(t, dir, "commit", "-qam", "body only")
+	if err := os.RemoveAll(filepath.Join(dir, "b")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-qm", "drop b")
+	write(t, dir, "README", "words\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-qm", "docs")
+
+	r := &Repo{Dir: dir, Exclude: []string{"vendor/"}}
+	frames, err := r.Changes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, g := range frames {
+		got = append(got, g.Subject)
+	}
+	if want := []string{"first", "second", "drop b", "docs"}; !equal(got, want) {
+		t.Fatalf("frames %v, want %v", got, want)
+	}
+	if !equal(frames[1].Edges["b"], []string{"a"}) {
+		t.Errorf("replayed b imports %v, want [a]", frames[1].Edges["b"])
+	}
+	if !equal(frames[2].Nodes, []string{"a"}) {
+		t.Errorf("after the delete the graph holds %v, want [a]", frames[2].Nodes)
+	}
+
+	// The replay has to agree with reading the whole tree.
+	for _, g := range frames {
+		whole := Graph{Commit: g.Commit}
+		if err := r.Resolve(&whole); err != nil {
+			t.Fatal(err)
+		}
+		if signature(whole) != signature(g) {
+			t.Errorf("%s: replay %v, whole tree %v", g.Subject, g.Nodes, whole.Nodes)
+		}
+	}
+}
+
+func TestThinKeepsTheEnds(t *testing.T) {
+	var frames []Graph
+	for i := 0; i < 10; i++ {
+		frames = append(frames, Graph{Commit: string(rune('a' + i))})
+	}
+	got := Thin(frames, 4)
+	if len(got) != 4 || got[0].Commit != "a" || got[3].Commit != "j" {
+		t.Errorf("Thin(10, 4) = %v, want four frames from a to j", got)
+	}
+	if len(Thin(frames, 0)) != 10 {
+		t.Error("Thin with no limit dropped frames")
+	}
+}
+
+// The last frame holds, and the frames before it share the rest evenly.
+func TestTheClockHoldsTheLastFrame(t *testing.T) {
+	c := newClock(4, 2, 3) // four half-second frames, then three seconds
+	if c.dur != 5 {
+		t.Fatalf("loop is %gs, want 2 + 3", c.dur)
+	}
+	if got := 1 - c.start[3]; got*c.dur < 3.49 {
+		t.Errorf("the last frame is up %gs, want 3.5", got*c.dur)
+	}
 }

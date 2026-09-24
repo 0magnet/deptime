@@ -24,15 +24,8 @@
 package deptime
 
 import (
-	"bufio"
 	"fmt"
-	"go/parser"
-	"go/token"
-	"io"
 	"os/exec"
-	"path"
-	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -103,100 +96,6 @@ func (r *Repo) ModulePath(commit string) (string, error) {
 	return "", fmt.Errorf("%s: go.mod declares no module path", commit)
 }
 
-// Resolve fills in a commit's graph.
-func (r *Repo) Resolve(g *Graph) error {
-	mod, err := r.ModulePath(g.Commit)
-	if err != nil {
-		return err
-	}
-	files, err := r.goFiles(g.Commit)
-	if err != nil {
-		return err
-	}
-	if len(files) == 0 {
-		return nil
-	}
-	contents, err := r.blobs(files)
-	if err != nil {
-		return err
-	}
-
-	edges := map[string]map[string]bool{}
-	g.Files = map[string]int{}
-	g.Lines = map[string]int{}
-	fset := token.NewFileSet()
-	for i, f := range files {
-		src := contents[i]
-		pkg := path.Dir(f.path)
-		if pkg == "." {
-			pkg = "."
-		}
-		g.Files[pkg]++
-		g.Lines[pkg] += 1 + strings.Count(string(src), "\n")
-		// ImportsOnly: the parser stops at the end of the import block, which
-		// is the whole reason this is fast enough to run over history.
-		af, err := parser.ParseFile(fset, f.path, src, parser.ImportsOnly)
-		if err != nil {
-			continue // a file that did not parse then is not an edge now
-		}
-		for _, im := range af.Imports {
-			p, err := strconv.Unquote(im.Path.Value)
-			if err != nil {
-				continue
-			}
-			rel, ok := internalTo(mod, p)
-			if !ok {
-				continue
-			}
-			if rel == pkg {
-				continue
-			}
-			if edges[pkg] == nil {
-				edges[pkg] = map[string]bool{}
-			}
-			edges[pkg][rel] = true
-		}
-	}
-
-	seen := map[string]bool{}
-	for p := range g.Files {
-		seen[p] = true
-	}
-	for from, tos := range edges {
-		seen[from] = true
-		for to := range tos {
-			seen[to] = true
-		}
-	}
-	g.Nodes = make([]string, 0, len(seen))
-	for p := range seen {
-		g.Nodes = append(g.Nodes, p)
-	}
-	sort.Strings(g.Nodes)
-	g.Edges = map[string][]string{}
-	for from, tos := range edges {
-		list := make([]string, 0, len(tos))
-		for to := range tos {
-			list = append(list, to)
-		}
-		sort.Strings(list)
-		g.Edges[from] = list
-	}
-	return nil
-}
-
-// internalTo reports whether an import belongs to this module, and what it is
-// called relative to the module root.
-func internalTo(mod, imp string) (string, bool) {
-	if imp == mod {
-		return ".", true
-	}
-	if rest, ok := strings.CutPrefix(imp, mod+"/"); ok {
-		return rest, true
-	}
-	return "", false
-}
-
 type blobRef struct {
 	sha  string
 	path string
@@ -237,59 +136,11 @@ func (r *Repo) excluded(p string) bool {
 // file. On skywire that is 22.7 MB in about two tenths of a second; running
 // `git show` per file would be 2,852 processes.
 func (r *Repo) blobs(files []blobRef) ([][]byte, error) {
-	cmd := exec.Command("git", "cat-file", "--batch")
-	cmd.Dir = r.Dir
-	in, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	go func() {
-		// Errors here are not reported: a short or broken stream shows up on
-		// the read side below, which is where it can say which object failed.
-		w := bufio.NewWriter(in)
-		for _, f := range files {
-			if _, err := w.WriteString(f.sha + "\n"); err != nil {
-				break
-			}
-		}
-		if err := w.Flush(); err != nil {
-			_ = err
-		}
-		_ = in.Close()
-	}()
-
-	br := bufio.NewReaderSize(out, 1<<20)
 	contents := make([][]byte, 0, len(files))
-	for range files {
-		header, err := br.ReadString('\n')
-		if err != nil {
-			return nil, fmt.Errorf("cat-file: %w", err)
-		}
-		fields := strings.Fields(strings.TrimSpace(header))
-		if len(fields) != 3 {
-			return nil, fmt.Errorf("cat-file: unexpected header %q", header)
-		}
-		n, err := strconv.Atoi(fields[2])
-		if err != nil {
-			return nil, fmt.Errorf("cat-file: bad size in %q", header)
-		}
-		buf := make([]byte, n)
-		if _, err := io.ReadFull(br, buf); err != nil {
-			return nil, err
-		}
-		if _, err := br.Discard(1); err != nil { // the trailing newline
-			return nil, err
-		}
-		contents = append(contents, buf)
-	}
-	return contents, cmd.Wait()
+	err := r.eachBlob(files, func(_ blobRef, src []byte) {
+		contents = append(contents, append([]byte(nil), src...))
+	})
+	return contents, err
 }
 
 func (r *Repo) git(args ...string) (string, error) {

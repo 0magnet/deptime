@@ -1,15 +1,51 @@
 # deptime
 
 A Go module's internal package dependency graph, animated over its git history,
-as one SVG.
+as one SVG — with a timeline across the top showing where in the history the
+graph on screen comes from.
 
 ```
-deptime -repo ../skywire -frames 40 -every 120 -depth 2 -o skywire.svg
+deptime -repo ../skywire -depth 2 -o skywire.svg
 ```
 
 Nothing is checked out. Nothing is built. No module cache, no network, and the
 working tree is never touched — which also means it is safe to point at a
 checkout somebody else is using.
+
+## Every change, not a sample
+
+By default there is one frame for every commit on the first-parent line at
+which the graph changed: a package added or removed, an import between two of
+them added or dropped. Commits that only edit function bodies are not frames —
+they would be the same picture held for most of the animation. Changes in size
+alone do not count either, or every commit would be one.
+
+On skywire that is 3,890 first-parent commits since 2019, of which **319**
+change the graph at `-depth 2` and **575** at full package depth. All of them
+are in the animation.
+
+`-frames N` thins to at most N, evenly, keeping the first and last; `-every N`
+is the old behavior of sampling every Nth commit.
+
+First parent, because that is the history as the default branch saw it: a
+merged branch arrives as one step, the merge.
+
+## The timeline
+
+The band across the top is the calendar. In it:
+
+- the package count over time, bright up to the frame on screen and dim ahead
+  of it;
+- a tick under the band for every frame — where the ticks are dense, the
+  structure was being worked on;
+- year lines;
+- the cursor, on the frame on screen, with its date, commit, subject and counts
+  written above.
+
+Frames get equal time on screen, not equal time on the calendar, so the cursor
+races across a quiet year and crawls through a busy month. A package is lit on
+the frame it arrives. The last frame holds for `-hold` seconds (default 3) so
+the graph as it stands stays up before the loop starts again.
 
 ## Why not just run goda per commit
 
@@ -23,37 +59,35 @@ not, because the versions it wants have moved or gone.
 The graph **between a module's own packages** needs none of that. An import of
 a sibling package is written in the file; the package a file belongs to is the
 directory it sits in. Reading blobs straight out of git and parsing only the
-import block answers it without compiling anything:
+import block answers it without compiling anything.
 
-```
-skywire, 2,852 non-vendor .go files, 22.7 MB of source
-  git cat-file --batch, whole commit      0.2 s
-  + parse (parser.ImportsOnly)            0.14 s per commit
-```
-
-40 commits spanning 2022 to 2026 read in **5.6 seconds**, none skipped.
+Reading every commit's whole tree would still be slow — about 140 ms a commit
+on skywire, nine minutes for its history, nearly all of it re-reading files
+that did not change. So history is read as a diff: one `git log --raw` for
+which blobs each commit replaced, one `git cat-file --batch` over every
+distinct blob version, each parsed once however many commits carry it, and the
+tree replayed in memory. Skywire's whole history reads in **12 to 15 seconds**.
 
 What this gives up is real: anything needing type information — which symbols
 are used, whether an import survives in a file that no longer compiles,
-generated code that was never committed — is invisible. The shape of the module
-over time is not.
+generated code that was never committed — is invisible. The shape of the
+module over time is not.
 
 ## Anchoring on the newest frame
 
 A union layout is stable, which is the point, but it is a layout of a graph
-nobody ever had: on skywire, 232 of the 632 packages in the union — 37% —
-existed at some point and are gone at HEAD, and they pull the picture around.
-The final frame therefore does not look like the dependency graph of the
-project as it stands, which is the one picture a reader already knows.
+nobody ever had: on skywire, 305 of the 705 packages in the union — 43% — existed
+at some point and are gone at HEAD, and they pull the picture around. The final
+frame would not look like the dependency graph of the project as it stands,
+which is the one picture a reader already knows.
 
 Laying out only the newest state and walking backwards is the obvious fix and
-throws those 232 away: a third of the history would never appear.
+throws those 305 away: much of the history would never appear.
 
 So `-anchor` (on by default) does both. The newest frame is laid out on its own
 with `dot`, its packages are pinned at those coordinates, and the departed ones
 are placed around them by a force pass that cannot move anything pinned. The
-animation ends on the graph as it is, and everything else grew into it. On
-skywire at `-depth 2` that is 7.5 s against 0.3 s for the plain union layout.
+animation ends on the graph as it is, and everything else grew into it.
 
 ## The layout is the whole problem
 
@@ -69,57 +103,48 @@ place in the 2022 frame, unseen, and simply appears.
 
 ## Cost, measured
 
-skywire, 40 commits, union of 621 packages and 3,683 edges:
+skywire, every graph change on the first-parent line, 2019–2026:
 
-| stage | |
-|---|---|
-| read 40 commits from git | 5.6 s |
-| layout — `dot` | **4 m 51 s** |
-| layout — `sfdp` | **0.5 s** |
+| view | frames | packages | edges | read | layout | SVG |
+|---|---|---|---|---|---|---|
+| `-depth 2` | 319 | 201 | 1,071 | 13 s | 13 s | 764 KB |
+| every package | 575 | 705 | 4,150 | 12 s | 5 m 20 s | 3.6 MB |
 
-`dot` is doing layered ranking and crossing minimization: the right picture for
-a graph small enough to read as a hierarchy, and quadratic misery beyond it.
-`sfdp` is multiscale force-directed and is what large graphs are for. The engine
-is chosen by size unless `-engine` says otherwise — `dot` up to 150 nodes,
-`sfdp` above.
+The full view's layout is `dot` over the 400 packages at HEAD, for the
+anchor. `dot` does layered ranking and crossing minimization, the right picture
+for a hierarchy and quadratic beyond a few hundred nodes. `-anchor=false` lays
+out the union with `sfdp` instead, in about half a second, at the price of an
+ending that does not look like HEAD. Without the anchor the engine is chosen by
+size unless `-engine` says otherwise — `dot` up to 150 nodes, `sfdp` above.
 
 `-depth` folds packages to a number of path elements, which is usually what you
-want for an overview:
-
-| view | packages | edges | engine | layout | SVG |
-|---|---|---|---|---|---|
-| `-depth 1` | 13 | 21 | dot | 59 ms | 20 KB |
-| `-depth 2` | 175 | 895 | sfdp | 322 ms | 273 KB |
-| every package | 621 | 3,683 | sfdp | 457 ms | 1,063 KB |
-
-End to end, the full view is about **31 seconds** — of which 6 is git, half a
-second is layout, and the rest is writing a megabyte of SVG.
+want for an overview.
 
 ## Size
 
 Visibility is encoded as the moments an element *changes*, not one value per
 frame. A package normally appears once and stays, so what is being said is
 "invisible, then visible from here": two stops and two key times, whatever the
-frame count. One value per frame costs every element the frame count in
-characters, which on two thousand elements over two hundred frames is most of a
-megabyte of semicolons.
+frame count. The per-frame captions and the timeline cursor are the only parts
+that grow with the number of frames.
 
 ## Flags
 
 ```
 -repo    the git repository to read (default ".")
--frames  how many commits to sample (default 40)
--every   take every Nth commit (default 1)
+-frames  at most this many frames, thinned evenly (default 0 = every change)
+-every   sample every Nth commit instead of every change (default 0)
 -depth   fold packages to this many path elements (0 = every package)
 -engine  auto, dot, sfdp, neato (default auto; ignored when -anchor is on)
 -anchor  pin the newest frame at its own dot layout (default true)
--fps     frames a second (default 4)
+-fps     frames a second (default 6)
+-hold    seconds to hold the final frame (default 3)
 -o       write the SVG here
--stats   report each frame as it is read
+-stats   list each frame
 ```
 
 ## Viewing
 
 SMIL animation runs in a browser, including inside `<img src="x.svg">`. Note
-that "Copy image" puts a rasterised still on the clipboard — for the animation,
+that "Copy image" puts a rasterized still on the clipboard — for the animation,
 save the file.
