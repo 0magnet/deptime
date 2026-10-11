@@ -14,7 +14,7 @@ import (
 
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // git is the program; args are ours
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
@@ -115,10 +115,16 @@ func TestTheWorkingTreeIsNeverTouched(t *testing.T) {
 	}
 	dirty := exec.Command("git", "status", "--porcelain")
 	dirty.Dir = dir
-	was, _ := dirty.Output()
+	was, err := dirty.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	r := &Repo{Dir: dir, Exclude: []string{"vendor/"}}
-	frames, _ := r.Commits(0, 1)
+	frames, err := r.Commits(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := range frames {
 		if err := r.Resolve(&frames[i]); err != nil {
 			t.Fatal(err)
@@ -127,13 +133,19 @@ func TestTheWorkingTreeIsNeverTouched(t *testing.T) {
 
 	after := exec.Command("git", "rev-parse", "HEAD")
 	after.Dir = dir
-	head2, _ := after.Output()
+	head2, err := after.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(head) != string(head2) {
 		t.Error("HEAD moved")
 	}
 	dirty2 := exec.Command("git", "status", "--porcelain")
 	dirty2.Dir = dir
-	now, _ := dirty2.Output()
+	now, err := dirty2.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(was) != string(now) {
 		t.Errorf("the working tree changed:\n%s", now)
 	}
@@ -145,7 +157,10 @@ func TestTheWorkingTreeIsNeverTouched(t *testing.T) {
 func TestTheUnionCarriesEveryFrameAndMarksWhenEachAppears(t *testing.T) {
 	dir := repo(t)
 	r := &Repo{Dir: dir, Exclude: []string{"vendor/"}}
-	frames, _ := r.Commits(0, 1)
+	frames, err := r.Commits(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := range frames {
 		if err := r.Resolve(&frames[i]); err != nil {
 			t.Fatal(err)
@@ -228,7 +243,7 @@ func equal(a, b []string) bool {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if a[i] != b[i] { //nolint:gosec // lengths checked equal above
 			return false
 		}
 	}

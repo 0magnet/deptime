@@ -5,7 +5,7 @@ as one SVG — with a timeline across the top showing where in the history the
 graph on screen comes from.
 
 ```
-deptime -repo ../skywire -depth 2 -o skywire.svg
+deptime --repo ../skywire --depth 2 -o skywire.svg
 ```
 
 Nothing is checked out. Nothing is built. No module cache, no network, and the

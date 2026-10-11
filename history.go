@@ -225,8 +225,8 @@ func (r *Repo) eachBlob(files []blobRef, fn func(blobRef, []byte)) error {
 				break
 			}
 		}
-		_ = w.Flush()
-		_ = in.Close()
+		w.Flush()  //nolint:errcheck,gosec // see above
+		in.Close() //nolint:errcheck,gosec // see above
 	}()
 
 	br := bufio.NewReaderSize(out, 1<<20)

@@ -145,7 +145,7 @@ func (r *Repo) blobs(files []blobRef) ([][]byte, error) {
 }
 
 func (r *Repo) git(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // git is the program; args are ours
 	cmd.Dir = r.Dir
 	out, err := cmd.Output()
 	if err != nil {

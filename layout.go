@@ -170,17 +170,17 @@ func parsePlain(s string) (*Placed, error) {
 			if len(f) < 4 {
 				continue
 			}
-			w, _ := strconv.ParseFloat(f[2], 64)
-			h, _ := strconv.ParseFloat(f[3], 64)
+			w := num(f[2])
+			h := num(f[3])
 			p.W, p.H = w*plainScale, h*plainScale
 		case "node":
 			if len(f) < 6 {
 				continue
 			}
-			x, _ := strconv.ParseFloat(f[2], 64)
-			y, _ := strconv.ParseFloat(f[3], 64)
-			w, _ := strconv.ParseFloat(f[4], 64)
-			h, _ := strconv.ParseFloat(f[5], 64)
+			x := num(f[2])
+			y := num(f[3])
+			w := num(f[4])
+			h := num(f[5])
 			p.Node[f[1]] = Box{
 				X: x * plainScale,
 				// Graphviz measures from the bottom left, SVG from the top.
@@ -198,8 +198,8 @@ func parsePlain(s string) (*Placed, error) {
 			}
 			pts := make([][2]float64, 0, n)
 			for i := 0; i < n; i++ {
-				x, _ := strconv.ParseFloat(f[4+2*i], 64)
-				y, _ := strconv.ParseFloat(f[5+2*i], 64)
+				x := num(f[4+2*i])
+				y := num(f[5+2*i])
 				pts = append(pts, [2]float64{x * plainScale, p.H - y*plainScale})
 			}
 			p.Edge[[2]string{f[1], f[2]}] = pts
@@ -417,4 +417,14 @@ func runGraphviz(engine, dot string) (*Placed, error) {
 		return nil, fmt.Errorf("%s -Tplain: %w", engine, err)
 	}
 	return parsePlain(string(out))
+}
+
+// num reads a number from graphviz plain output; a field that is not one is
+// zero, which the caller would have got from the ignored error anyway.
+func num(s string) float64 {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }

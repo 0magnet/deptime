@@ -377,7 +377,7 @@ func writeVisibility(b *strings.Builder, in []bool, c clock) {
 	}
 	var vals, times []string
 	for i, v := range in {
-		if i == 0 || v != in[i-1] {
+		if i == 0 || v != in[i-1] { //nolint:gosec // i > 0 here
 			vals = append(vals, boolStr(v))
 			times = append(times, fmt.Sprintf("%.5g", c.start[i]))
 		}
