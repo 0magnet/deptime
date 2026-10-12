@@ -164,3 +164,35 @@ that grow with the number of frames.
 SMIL animation runs in a browser, including inside `<img src="x.svg">`. Note
 that "Copy image" puts a rasterized still on the clipboard — for the animation,
 save the file.
+
+## Dependency Graph
+
+Made with [goda](https://github.com/loov/goda):
+
+```
+go run github.com/loov/goda@latest graph github.com/0magnet/deptime/... | dot -Tsvg -o docs/deptime-goda-graph.svg
+```
+
+![Dependency Graph](docs/deptime-goda-graph.svg "github.com/0magnet/deptime Dependency Graph")
+
+## Lines of Code
+
+Made with [gocloc](https://github.com/hhatto/gocloc) (excludes `vendor/`, `node_modules/`, `.git/`):
+
+```
+gocloc --not-match-d='(vendor|node_modules|\.git)' .
+```
+
+```
+-------------------------------------------------------------------------------
+Language                     files          blank        comment           code
+-------------------------------------------------------------------------------
+Go                               9            127            313           1609
+Markdown                         1             45              0            152
+Makefile                         1             21             52            105
+YAML                             1              0              7             98
+Bourne Shell                     1              8             17             31
+-------------------------------------------------------------------------------
+TOTAL                           13            201            389           1995
+-------------------------------------------------------------------------------
+```
