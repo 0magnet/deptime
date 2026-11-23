@@ -47,7 +47,7 @@ old and new names in the commit message. Never rename anything that leaves the
 process: CLI commands, flags, file formats and JSON fields are used by other
 programs.
 
-In this repository, `writeCaption` and `writeVisibility` share their prefix and
+In this repository, `writeTimeline` and `writeVisibility` share their prefix and
 sort together, and a caller writes `deptime.Render`, not `deptime.RenderDeptime`.
 
 ## No coding tool attributions
